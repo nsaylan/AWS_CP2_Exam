@@ -55,9 +55,7 @@ def parse_aws_questions(pdf_content, debug=True):
     answer_seen_for_current = False
 
     question_start_pattern = re.compile(r'^\s*(\d+)\s*[\)\.\-]\s*(.*)')
-    # Daha esnek option pattern: "A. ", "A) ", "A - ", "A: " formatlarını yakalar
     option_pattern = re.compile(r'^([A-E])\s*[\)\.\-\:]\s*(.+)')
-    # "A)" veya "A." gibi tek başına harf içeren satırlar (seçenek metni alt satırda)
     option_pattern_loose = re.compile(r'^([A-E])\s*[\)\.\-]\s*$')
     correct_answer_pattern = re.compile(
         r'(?:correct\s*answers?|answer\s*\(s\)|answer|ans)\s*[:\-]?\s*([A-E](?:\s*,?\s*[A-E]){0,4})\b',
@@ -82,7 +80,6 @@ def parse_aws_questions(pdf_content, debug=True):
                 'correct': current_correct if current_correct else ""
             })
         elif current_question:
-            # Tek seçenekli veya seçeneksiz soruları da kaydet (debug için)
             q_match = re.match(r'^(\d+)\)\s*(.*)', current_question, re.DOTALL)
             if q_match:
                 q_num = q_match.group(1)
@@ -110,7 +107,6 @@ def parse_aws_questions(pdf_content, debug=True):
             i += 1
             continue
 
-        # Cevap görüldüyse, yeni soru başlayana kadar her şeyi atla
         if answer_seen_for_current:
             if question_start_pattern.match(stripped):
                 pass
@@ -118,7 +114,6 @@ def parse_aws_questions(pdf_content, debug=True):
                 i += 1
                 continue
 
-        # Cevap satırı mı?
         if current_question is not None:
             m = correct_answer_pattern.search(stripped)
             if m:
@@ -130,7 +125,6 @@ def parse_aws_questions(pdf_content, debug=True):
                         i += 1
                         continue
 
-        # Yeni soru başlangıcı mı?
         q_match = question_start_pattern.match(stripped)
         if q_match:
             q_num = q_match.group(1)
@@ -143,7 +137,6 @@ def parse_aws_questions(pdf_content, debug=True):
             i += 1
             continue
 
-        # Seçenek satırı mı?
         if current_question is not None and not answer_seen_for_current:
             o_match = option_pattern.match(stripped)
             opt_letter = None
@@ -153,23 +146,20 @@ def parse_aws_questions(pdf_content, debug=True):
                 opt_letter = o_match.group(1)
                 opt_text = o_match.group(2).strip()
             else:
-                # "A)" gibi tek başına harf mi? Sonraki satır seçenek metni olabilir
                 loose_match = option_pattern_loose.match(stripped)
                 if loose_match:
                     opt_letter = loose_match.group(1)
-                    # Sonraki satırı seçenek metni olarak al
                     if i + 1 < len(cleaned_lines):
                         next_line = cleaned_lines[i + 1].strip()
                         if next_line and not question_start_pattern.match(next_line) \
                                 and not option_pattern.match(next_line) \
                                 and not correct_answer_pattern.search(next_line):
                             opt_text = next_line
-                            i += 1  # Sonraki satırı da tükettik
+                            i += 1
 
             if opt_letter and opt_text:
                 opt_text = re.sub(r'Most\s+Voted', '', opt_text, flags=re.IGNORECASE).strip()
 
-                # Çok satırlı seçenek metinlerini birleştir
                 while i + 1 < len(cleaned_lines):
                     next_line = cleaned_lines[i + 1].strip()
                     if not next_line:
@@ -184,7 +174,6 @@ def parse_aws_questions(pdf_content, debug=True):
                         break
                     if next_line.startswith(('Explanation:', 'Correct Answer', 'Answer', 'Ans')):
                         break
-                    # Açıklama paragrafı gibi görünen satırları durdur
                     if re.match(r'^[A-Z][a-z]', next_line) and len(next_line) > 80:
                         break
                     if re.match(r'^(The|This|These|Those|It|In|For|A |An )', next_line) and len(next_line) > 60:
@@ -196,7 +185,6 @@ def parse_aws_questions(pdf_content, debug=True):
                 i += 1
                 continue
 
-            # Soru metninin devamı (henüz seçenek başlamadıysa)
             if len(current_options) == 0:
                 if not stripped.startswith(('Explanation:', 'Correct Answer', 'Answer', 'Ans')):
                     if not correct_answer_pattern.search(stripped):
@@ -213,7 +201,6 @@ def parse_aws_questions(pdf_content, debug=True):
     skipped_questions = []
 
     for rq in raw_questions:
-        # 2'den az seçeneği olan soruları atla ve raporla
         if len(rq['options']) < 2:
             skipped_questions.append(rq)
             continue
@@ -232,7 +219,7 @@ def parse_aws_questions(pdf_content, debug=True):
                 questions_by_num[q_num] = rq
 
     # ============================================================
-    # DEBUG ÇIKTILARI - Terminalde görünecek
+    # DEBUG ÇIKTILARI
     # ============================================================
     if debug:
         print("\n" + "=" * 70)
@@ -241,28 +228,32 @@ def parse_aws_questions(pdf_content, debug=True):
         print(f"Toplam ham (raw) soru sayısı       : {len(raw_questions)}")
         print(f"Benzersiz (indekslenen) soru sayısı: {len(questions_by_num)}")
         print(f"Atlanan soru sayısı                : {len(skipped_questions)}")
-        print(f"Fark (elenen duplicate)            : {len(raw_questions) - len(skipped_questions) - len(questions_by_num)}")
         print("=" * 70)
-
-        # İlk 30 atlanan soruyu göster
-        print("\n--- ATLANAN SORULARIN İLK 30'U ---\n")
-        for s in skipped_questions[:30]:
-            print(f"Soru No: {s['num'] if s['num'] else '(yok)'} | "
-                  f"Seçenek Sayısı: {len(s['options'])}")
-            print(f"  Metin: {s['text'][:150]}")
-            for opt in s['options']:
-                print(f"    -> {opt[:100]}")
-            if not s['options']:
-                print("    (SEÇENEK YOK!)")
-            print("-" * 50)
 
     # Final listeyi oluştur
     final_questions = []
     for q_num, rq in questions_by_num.items():
         correct_full = ""
+        correct_letters = ""  # "A", "AD", "BCE" gibi
+        is_multi_answer = False
+
         if rq['correct']:
             correct_clean = rq['correct'].replace(" ", "").replace(",", "").upper()
-            if correct_clean:
+            # Birden fazla harf varsa çoklu cevap
+            if len(correct_clean) > 1:
+                is_multi_answer = True
+                correct_letters = correct_clean
+                # Doğru cevapların tam metinlerini birleştir
+                full_texts = []
+                for letter in correct_clean:
+                    for opt in rq['options']:
+                        if opt.strip().startswith(letter + "."):
+                            full_texts.append(opt)
+                            break
+                correct_full = " | ".join(full_texts) if full_texts else correct_clean
+            else:
+                # Tek cevap
+                correct_letters = correct_clean
                 first_letter = correct_clean[0]
                 for opt in rq['options']:
                     if opt.strip().startswith(first_letter + "."):
@@ -270,6 +261,15 @@ def parse_aws_questions(pdf_content, debug=True):
                         break
                 if not correct_full:
                     correct_full = correct_clean
+
+        # Soru metnini kontrol et - "choose two", "select two" gibi ifadeler
+        soru_metni_lower = rq['text'].lower()
+        if re.search(r'(choose|select)\s+(two|three|2|3)', soru_metni_lower):
+            is_multi_answer = True
+        if '(choose two' in soru_metni_lower or '(select two' in soru_metni_lower:
+            is_multi_answer = True
+        if 'choose two.' in soru_metni_lower or 'select two.' in soru_metni_lower:
+            is_multi_answer = True
 
         if rq['num']:
             soru_text = f"{rq['num']}) {rq['text']}"
@@ -279,10 +279,11 @@ def parse_aws_questions(pdf_content, debug=True):
         final_questions.append({
             'soru': soru_text,
             'siklar': rq['options'],
-            'dogru_cevap': correct_full
+            'dogru_cevap': correct_full,
+            'dogru_harfler': correct_letters,   # "AD" gibi
+            'coklu_cevap': is_multi_answer       # True/False
         })
 
-    # Soru numarasına göre sırala
     def sort_key(q):
         m = re.match(r'^(\d+)\)', q['soru'])
         return int(m.group(1)) if m else 999999
@@ -451,26 +452,78 @@ elif st.session_state.quiz_started and st.session_state.current_question_index <
     st.subheader(f"Question {idx + 1} / {st.session_state.num_to_ask}")
     st.write(q.get('soru', 'Question text not found'))
 
+    is_multi = q.get('coklu_cevap', False)
+
+    # Çoklu cevap sorusu uyarısı
+    if is_multi:
+        correct_letters_preview = q.get('dogru_harfler', '')
+        num_expected = len(correct_letters_preview) if correct_letters_preview else 2
+        st.info(f"ℹ️ This question has **multiple correct answers**. Select **{num_expected}** option(s).")
+
     with st.form(key=f"form_q_{idx}"):
-        user_answer = st.radio(
-            "Select your answer:",
-            q.get('siklar', []),
-            key=f"radio_q_{idx}",
-            index=None
-        )
+
+        if is_multi:
+            # Çoklu cevap: checkbox kullan
+            st.write("Select your answers:")
+            selected_options = []
+            for opt in q.get('siklar', []):
+                if st.checkbox(opt, key=f"checkbox_q_{idx}_{opt[:30]}"):
+                    selected_options.append(opt)
+            user_answer = selected_options  # liste
+        else:
+            # Tek cevap: radio kullan
+            user_answer = st.radio(
+                "Select your answer:",
+                q.get('siklar', []),
+                key=f"radio_q_{idx}",
+                index=None
+            )
+
         submit_button = st.form_submit_button("Submit Answer")
 
     if submit_button:
-        if user_answer is None:
-            st.warning("Please select an answer.")
+        # Cevap verilmiş mi kontrol et
+        if is_multi:
+            if not user_answer:
+                st.warning("Please select at least one answer.")
+                st.stop()
         else:
-            st.session_state.user_answers[idx] = user_answer
+            if user_answer is None:
+                st.warning("Please select an answer.")
+                st.stop()
 
-            correct_answer_text = q.get('dogru_cevap', '').strip()
+        st.session_state.user_answers[idx] = user_answer
+
+        correct_letters = q.get('dogru_harfler', '').replace(" ", "").replace(",", "").upper()
+        correct_answer_text = q.get('dogru_cevap', '').strip()
+
+        if is_multi:
+            # Kullanıcının seçtiği harfleri topla
+            user_letters = set()
+            for ans in user_answer:
+                if ans.strip():
+                    user_letters.add(ans.strip()[0].upper())
+
+            correct_set = set(correct_letters) if correct_letters else set()
+
+            # Tam eşleşme gerekli (fazla veya eksik seçim yanlış sayılır)
+            if user_letters and user_letters == correct_set:
+                st.success("Correct! 🎉")
+                st.session_state.score += 1
+            else:
+                st.error(f"❌ Incorrect.")
+                st.write(f"**Your selection:** {', '.join(sorted(user_letters))}")
+                st.write(f"**Correct answer(s):** {correct_letters}")
+                if correct_answer_text:
+                    st.write(f"**Full correct answer text:** {correct_answer_text}")
+
+        else:
+            # Tek cevap karşılaştırması
             user_answer_prefix = user_answer.strip()[0] if user_answer.strip() else ""
-
             correct_letter = ""
-            if correct_answer_text:
+            if correct_letters:
+                correct_letter = correct_letters
+            elif correct_answer_text:
                 if len(correct_answer_text) > 5 and correct_answer_text[1:2] == '.':
                     correct_letter = correct_answer_text[0]
                 else:
@@ -485,14 +538,14 @@ elif st.session_state.quiz_started and st.session_state.current_question_index <
                 else:
                     st.error("❌ Incorrect. (The correct answer could not be extracted from the PDF for this question.)")
 
-            st.caption(f"Your answer: {user_answer}")
+        st.caption(f"Your answer: {user_answer}")
 
-            st.session_state.current_question_index += 1
+        st.session_state.current_question_index += 1
 
-            if st.session_state.current_question_index < st.session_state.num_to_ask:
-                st.button("Next Question")
-            else:
-                st.button("View Results")
+        if st.session_state.current_question_index < st.session_state.num_to_ask:
+            st.button("Next Question")
+        else:
+            st.button("View Results")
 
 # Stage 3: Results Screen
 elif st.session_state.quiz_started and st.session_state.current_question_index >= st.session_state.num_to_ask:
